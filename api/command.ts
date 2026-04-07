@@ -1,15 +1,22 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export default async function handler(req: any, res: any) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+  // Ensure we can handle both parsed and unparsed bodies
+  let body = req.body;
+  if (typeof body === "string") {
+    try {
+      body = JSON.parse(body);
+    } catch (e) {
+      console.error("Failed to parse body string:", e);
+    }
   }
 
-  const { command, location } = req.body;
+  const { command, location } = body || {};
   const apiKey = process.env.GEMINI_API_KEY;
 
   if (!apiKey) {
-    return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
+    console.error("CRITICAL: GEMINI_API_KEY is missing in environment variables!");
+    return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server. Please check your Vercel Environment Variables." });
   }
 
   try {

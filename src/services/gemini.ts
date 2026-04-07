@@ -13,7 +13,7 @@ export async function processCommand(command: string, location?: { lat: number; 
       const errorMessage = errorData.error || "Erro no servidor";
       
       if (errorMessage.includes("API_KEY") || errorMessage.includes("configured")) {
-        return "Senhor, detectei que a chave GEMINI_API_KEY não foi configurada nas variáveis de ambiente da sua hospedagem (Vercel/Cloud Run). Por favor, adicione-a para que eu possa processar seus comandos.";
+        return "Senhor, detectei que a chave GEMINI_API_KEY não foi configurada ou ainda não foi propagada na sua hospedagem. Se você já adicionou a variável na Vercel, lembre-se que é OBRIGATÓRIO fazer um 'Redeploy' para que as alterações tenham efeito.";
       }
       
       throw new Error(errorMessage);
