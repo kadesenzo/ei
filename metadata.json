@@ -1,0 +1,5 @@
+{
+  "name": "Jarvis V1 - Business Assistant",
+  "description": "A futuristic voice-controlled assistant that helps you find business leads and generate websites automatically.",
+  "requestFramePermissions": ["microphone", "geolocation"]
+}
