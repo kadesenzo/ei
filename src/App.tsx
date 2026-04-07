@@ -59,6 +59,7 @@ export default function App() {
   ]);
   const [appActions, setAppActions] = useState<AppAction[]>([]);
   const [chatInput, setChatInput] = useState("");
+  const [pendingAction, setPendingAction] = useState<{ type: string; data: any; callback: () => void } | null>(null);
   
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef<SpeechSynthesis>(window.speechSynthesis);
@@ -156,24 +157,36 @@ export default function App() {
     
     const response = await processCommand(transcript, location || undefined);
     
+    // Helper for confirmation
+    const requestConfirmation = (type: string, data: any, callback: () => void) => {
+      setPendingAction({ type, data, callback });
+      const msg = `Senhor, recebi uma solicitação para ${type}. Devo prosseguir?`;
+      addLog(msg, "jarvis");
+      speak(msg);
+    };
+
     // Parse actions
     if (response.includes("[ACTION:BUSCAR_LEADS]")) {
-      setStatus("BUSCANDO LEADS...");
-      setTimeout(() => {
-        setLeads([
-          { name: "Padaria da Esquina", address: "Próximo a você", status: "Sem Site" },
-          { name: "Oficina Mecânica Kaen", address: "2km de distância", status: "Site Antigo" },
-          { name: "Pet Shop Amigo", address: "Bairro vizinho", status: "Sem presença online" }
-        ]);
-        addLog("Leads locais identificados, Senhor.", "system");
-      }, 1500);
+      requestConfirmation("buscar leads de negócios", null, () => {
+        setStatus("BUSCANDO LEADS...");
+        setTimeout(() => {
+          setLeads([
+            { name: "Padaria da Esquina", address: "Próximo a você", status: "Sem Site" },
+            { name: "Oficina Mecânica Kaen", address: "2km de distância", status: "Site Antigo" },
+            { name: "Pet Shop Amigo", address: "Bairro vizinho", status: "Sem presença online" }
+          ]);
+          addLog("Leads locais identificados, Senhor.", "system");
+        }, 1500);
+      });
     }
 
     if (response.includes("[ACTION:OPEN_URL]")) {
       const urlMatch = response.match(/https?:\/\/[^\s\]]+/);
       if (urlMatch) {
-        addLog(`Abrindo recurso externo: ${urlMatch[0]}`, "system");
-        window.open(urlMatch[0], "_blank");
+        requestConfirmation(`abrir a URL: ${urlMatch[0]}`, urlMatch[0], () => {
+          addLog(`Abrindo recurso externo: ${urlMatch[0]}`, "system");
+          window.open(urlMatch[0], "_blank");
+        });
       }
     }
 
@@ -182,12 +195,14 @@ export default function App() {
     if (homeMatch) {
       try {
         const homeData = JSON.parse(homeMatch[1]);
-        setHomeDevices(prev => prev.map(device => 
-          device.type === homeData.device 
-            ? { ...device, status: homeData.action === "on" ? "on" : "off", value: homeData.value || device.value }
-            : device
-        ));
-        addLog(`Controle residencial: ${homeData.device} -> ${homeData.action}`, "system");
+        requestConfirmation(`controlar ${homeData.device}`, homeData, () => {
+          setHomeDevices(prev => prev.map(device => 
+            device.type === homeData.device 
+              ? { ...device, status: homeData.action === "on" ? "on" : "off", value: homeData.value || device.value }
+              : device
+          ));
+          addLog(`Controle residencial: ${homeData.device} -> ${homeData.action}`, "system");
+        });
       } catch (e) {
         console.error("Failed to parse home JSON", e);
       }
@@ -198,12 +213,14 @@ export default function App() {
     if (appMatch) {
       try {
         const appData = JSON.parse(appMatch[1]);
-        const newAppAction: AppAction = {
-          id: Date.now().toString(),
-          ...appData
-        };
-        setAppActions(prev => [newAppAction, ...prev].slice(0, 5));
-        addLog(`Ação em aplicativo: ${appData.app} -> ${appData.action}`, "system");
+        requestConfirmation(`executar ação no app ${appData.app}`, appData, () => {
+          const newAppAction: AppAction = {
+            id: Date.now().toString(),
+            ...appData
+          };
+          setAppActions(prev => [newAppAction, ...prev].slice(0, 5));
+          addLog(`Ação em aplicativo: ${appData.app} -> ${appData.action}`, "system");
+        });
       } catch (e) {
         console.error("Failed to parse app JSON", e);
       }
@@ -214,13 +231,15 @@ export default function App() {
     if (taskMatch) {
       try {
         const taskData = JSON.parse(taskMatch[1]);
-        const newTask: AutomationTask = {
-          id: `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          ...taskData,
-          progress: 0
-        };
-        setActiveTasks(prev => [newTask, ...prev]);
-        addLog(`Tarefa de automação iniciada: ${newTask.taskName}`, "system");
+        requestConfirmation(`iniciar automação: ${taskData.taskName}`, taskData, () => {
+          const newTask: AutomationTask = {
+            id: `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            ...taskData,
+            progress: 0
+          };
+          setActiveTasks(prev => [newTask, ...prev]);
+          addLog(`Tarefa de automação iniciada: ${newTask.taskName}`, "system");
+        });
       } catch (e) {
         console.error("Failed to parse task JSON", e);
       }
@@ -231,17 +250,21 @@ export default function App() {
     if (siteMatch) {
       try {
         const data = JSON.parse(siteMatch[1]);
-        setSiteData(data);
-        setShowSiteBuilder(true);
-        addLog("Estrutura do site gerada conforme solicitado.", "system");
+        requestConfirmation(`gerar o site para ${data.name}`, data, () => {
+          setSiteData(data);
+          setShowSiteBuilder(true);
+          addLog("Estrutura do site gerada conforme solicitado.", "system");
+        });
       } catch (e) {
         console.error("Failed to parse site JSON", e);
       }
     }
 
-    const cleanResponse = response.replace(/\[ACTION:.*\]/g, "").replace(/<SITE_JSON>[\s\S]*?<\/SITE_JSON>/g, "").replace(/<TASK_JSON>[\s\S]*?<\/TASK_JSON>/g, "").trim();
-    addLog(cleanResponse, "jarvis");
-    speak(cleanResponse);
+    const cleanResponse = response.replace(/\[ACTION:.*\]/g, "").replace(/<SITE_JSON>[\s\S]*?<\/SITE_JSON>/g, "").replace(/<TASK_JSON>[\s\S]*?<\/TASK_JSON>/g, "").replace(/<HOME_JSON>[\s\S]*?<\/HOME_JSON>/g, "").replace(/<APP_JSON>[\s\S]*?<\/APP_JSON>/g, "").trim();
+    if (cleanResponse && !pendingAction) {
+      addLog(cleanResponse, "jarvis");
+      speak(cleanResponse);
+    }
     setStatus("SISTEMA ONLINE");
   };
 
@@ -639,6 +662,60 @@ export default function App() {
                   </div>
                 </div>
               </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Confirmation Modal */}
+        <AnimatePresence>
+          {pendingAction && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md"
+            >
+              <motion.div 
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                className="w-full max-w-md bg-slate-900 border border-cyan-500/30 rounded-2xl p-8 shadow-[0_0_50px_rgba(6,182,212,0.2)]"
+              >
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="p-3 bg-cyan-500/20 rounded-xl">
+                    <Shield className="w-8 h-8 text-cyan-400" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-white">Confirmação Stark</h2>
+                    <p className="text-xs text-cyan-600 uppercase tracking-widest">Protocolo de Segurança</p>
+                  </div>
+                </div>
+                
+                <p className="text-cyan-100 mb-8 leading-relaxed">
+                  Senhor, recebi uma solicitação para <span className="text-cyan-400 font-bold">{pendingAction.type}</span>. 
+                  Deseja que eu execute esta ação agora?
+                </p>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <button 
+                    onClick={() => {
+                      addLog("Ação cancelada pelo Criador.", "system");
+                      setPendingAction(null);
+                    }}
+                    className="py-3 rounded-xl border border-red-500/30 text-red-500 font-bold hover:bg-red-500/10 transition-all"
+                  >
+                    CANCELAR
+                  </button>
+                  <button 
+                    onClick={() => {
+                      pendingAction.callback();
+                      setPendingAction(null);
+                    }}
+                    className="py-3 rounded-xl bg-cyan-500 text-slate-950 font-bold hover:bg-cyan-400 transition-all shadow-[0_0_20px_rgba(6,182,212,0.4)]"
+                  >
+                    EXECUTAR
+                  </button>
+                </div>
+              </motion.div>
             </motion.div>
           )}
         </AnimatePresence>
