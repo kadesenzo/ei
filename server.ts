@@ -22,7 +22,8 @@ async function startServer() {
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
+      console.error("GEMINI_API_KEY is missing!");
+      return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server. Please add it to your environment variables." });
     }
 
     try {

@@ -9,8 +9,14 @@ export async function processCommand(command: string, location?: { lat: number; 
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || "Erro no servidor");
+      const errorData = await response.json().catch(() => ({ error: "Erro desconhecido no servidor" }));
+      const errorMessage = errorData.error || "Erro no servidor";
+      
+      if (errorMessage.includes("API_KEY") || errorMessage.includes("configured")) {
+        return "Senhor, detectei que a chave GEMINI_API_KEY não foi configurada nas variáveis de ambiente da sua hospedagem (Vercel/Cloud Run). Por favor, adicione-a para que eu possa processar seus comandos.";
+      }
+      
+      throw new Error(errorMessage);
     }
 
     const data = await response.json();

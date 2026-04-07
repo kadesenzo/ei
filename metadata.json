@@ -1,5 +1,5 @@
 {
-  "name": "Jarvis V1 - Business Assistant",
-  "description": "A futuristic voice-controlled assistant that helps you find business leads and generate websites automatically.",
+  "name": "JARVIS SENHOR",
+  "description": "O assistente definitivo do Criador. Controle total sobre casa, aplicativos e automação inteligente com interface HUD futurista.",
   "requestFramePermissions": ["microphone", "geolocation"]
 }

@@ -293,6 +293,10 @@ export default function App() {
         </div>
         <div className="flex gap-6 items-center">
           <div className="flex items-center gap-2 text-[10px] opacity-70">
+            <Settings className="w-3 h-3 text-cyan-500" />
+            <span className="text-cyan-500/50">API: ACTIVE</span>
+          </div>
+          <div className="flex items-center gap-2 text-[10px] opacity-70">
             <MapPin className={`w-3 h-3 ${location ? "text-green-500" : "text-red-500"}`} />
             <span>{location ? `${location.lat.toFixed(2)}, ${location.lng.toFixed(2)}` : "GPS OFFLINE"}</span>
           </div>
