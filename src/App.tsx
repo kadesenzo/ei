@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Mic, MicOff, Terminal, Search, Globe, Layout, Cpu, MapPin, X, ExternalLink, Lightbulb, Thermometer, Shield, Music, Smartphone, Settings } from "lucide-react";
+import { Mic, MicOff, Terminal, Search, Globe, Layout, Cpu, MapPin, X, ExternalLink, Lightbulb, Thermometer, Shield, Music, Smartphone, Settings, Monitor, Eye, TrendingUp, ListChecks, FileCode } from "lucide-react";
 import JarvisCore from "./components/JarvisCore";
 import { processCommand } from "./services/gemini";
 
@@ -41,6 +41,19 @@ interface AppAction {
   params?: string;
 }
 
+interface FinanceRecord {
+  id: string;
+  type: "ganho" | "despesa";
+  amount: number;
+  description: string;
+  date: string;
+}
+
+interface Plan {
+  goal: string;
+  steps: string[];
+}
+
 export default function App() {
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -58,8 +71,13 @@ export default function App() {
     { id: "4", name: "Sistema de Som", type: "som", status: "off" },
   ]);
   const [appActions, setAppActions] = useState<AppAction[]>([]);
+  const [financeRecords, setFinanceRecords] = useState<FinanceRecord[]>([]);
+  const [currentPlan, setCurrentPlan] = useState<Plan | null>(null);
+  const [showScripts, setShowScripts] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [pendingAction, setPendingAction] = useState<{ type: string; data: any; callback: () => void } | null>(null);
+  const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef<SpeechSynthesis>(window.speechSynthesis);
@@ -96,6 +114,18 @@ export default function App() {
     // Auto-get location
     requestLocation();
 
+    // Health check
+    fetch("/api/health")
+      .then(res => res.json())
+      .then(data => {
+        if (!data.apiConfigured) {
+          addLog("ALERTA: GEMINI_API_KEY não detectada no servidor.", "system");
+        } else {
+          addLog(`Sistemas centrais online. Ambiente: ${data.environment}`, "system");
+        }
+      })
+      .catch(() => addLog("Erro ao conectar com o servidor de comando.", "system"));
+
     addLog("Protocolo Jarvis ativo. Bem-vindo de volta, Criador.", "system");
   }, []);
 
@@ -119,6 +149,36 @@ export default function App() {
       );
     }
   };
+
+  const startScreenLink = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      setScreenStream(stream);
+      addLog("Protocolo de Visão estabelecido. Analisando sua tela, Senhor.", "system");
+      speak("Protocolo de Visão estabelecido. Estou analisando sua tela, Senhor.");
+      
+      stream.getVideoTracks()[0].onended = () => {
+        setScreenStream(null);
+        addLog("Conexão visual encerrada.", "system");
+      };
+    } catch (err) {
+      console.error("Screen capture failed:", err);
+      addLog("Falha ao estabelecer link visual.", "system");
+    }
+  };
+
+  const stopScreenLink = () => {
+    if (screenStream) {
+      screenStream.getTracks().forEach(track => track.stop());
+      setScreenStream(null);
+    }
+  };
+
+  useEffect(() => {
+    if (videoRef.current && screenStream) {
+      videoRef.current.srcObject = screenStream;
+    }
+  }, [screenStream]);
 
   const addLog = (text: string, type: "user" | "jarvis" | "system") => {
     setLogs(prev => [{ id: Date.now() + Math.random(), text, type }, ...prev].slice(0, 10));
@@ -260,7 +320,48 @@ export default function App() {
       }
     }
 
-    const cleanResponse = response.replace(/\[ACTION:.*\]/g, "").replace(/<SITE_JSON>[\s\S]*?<\/SITE_JSON>/g, "").replace(/<TASK_JSON>[\s\S]*?<\/TASK_JSON>/g, "").replace(/<HOME_JSON>[\s\S]*?<\/HOME_JSON>/g, "").replace(/<APP_JSON>[\s\S]*?<\/APP_JSON>/g, "").trim();
+    if (response.includes("[ACTION:SCREEN_LINK]")) {
+      requestConfirmation("vincular sua tela ao meu sistema", null, () => {
+        startScreenLink();
+      });
+    }
+
+    if (response.includes("[ACTION:SHOW_SCRIPTS]")) {
+      setShowScripts(true);
+    }
+
+    // Parse Plan JSON
+    const planMatch = response.match(/<PLAN_JSON>([\s\S]*?)<\/PLAN_JSON>/);
+    if (planMatch) {
+      try {
+        const planData = JSON.parse(planMatch[1]);
+        setCurrentPlan(planData);
+        addLog(`Plano de ação gerado: ${planData.goal}`, "system");
+      } catch (e) {
+        console.error("Failed to parse plan JSON", e);
+      }
+    }
+
+    // Parse Finance JSON
+    const financeMatch = response.match(/<FINANCE_JSON>([\s\S]*?)<\/FINANCE_JSON>/);
+    if (financeMatch) {
+      try {
+        const finData = JSON.parse(financeMatch[1]);
+        requestConfirmation(`registrar ${finData.type}: R$ ${finData.amount}`, finData, () => {
+          const newRecord: FinanceRecord = {
+            id: Date.now().toString(),
+            ...finData,
+            date: new Date().toLocaleDateString()
+          };
+          setFinanceRecords(prev => [newRecord, ...prev].slice(0, 10));
+          addLog(`Financeiro atualizado: ${finData.description}`, "system");
+        });
+      } catch (e) {
+        console.error("Failed to parse finance JSON", e);
+      }
+    }
+
+    const cleanResponse = response.replace(/\[ACTION:.*\]/g, "").replace(/<SITE_JSON>[\s\S]*?<\/SITE_JSON>/g, "").replace(/<TASK_JSON>[\s\S]*?<\/TASK_JSON>/g, "").replace(/<HOME_JSON>[\s\S]*?<\/HOME_JSON>/g, "").replace(/<APP_JSON>[\s\S]*?<\/APP_JSON>/g, "").replace(/<PLAN_JSON>[\s\S]*?<\/PLAN_JSON>/g, "").replace(/<FINANCE_JSON>[\s\S]*?<\/FINANCE_JSON>/g, "").trim();
     if (cleanResponse && !pendingAction) {
       addLog(cleanResponse, "jarvis");
       speak(cleanResponse);
@@ -269,32 +370,39 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-cyan-400 font-mono overflow-hidden flex flex-col p-6 relative">
+    <div className="min-h-screen bg-slate-950 text-purple-400 font-mono overflow-hidden flex flex-col p-6 relative">
       {/* Background Grid Decoration */}
       <div className="absolute inset-0 opacity-10 pointer-events-none" 
-           style={{ backgroundImage: 'linear-gradient(#06b6d4 1px, transparent 1px), linear-gradient(90deg, #06b6d4 1px, transparent 1px)', backgroundSize: '50px 50px' }} />
-      <div className="absolute inset-0 bg-radial-at-t from-cyan-500/10 via-transparent to-transparent pointer-events-none" />
+           style={{ backgroundImage: 'linear-gradient(#a855f7 1px, transparent 1px), linear-gradient(90deg, #a855f7 1px, transparent 1px)', backgroundSize: '50px 50px' }} />
+      <div className="absolute inset-0 bg-radial-at-t from-purple-500/10 via-transparent to-transparent pointer-events-none" />
 
       {/* Header */}
-      <header className="flex justify-between items-center border-b border-cyan-900/50 pb-4 mb-8 relative z-10">
+      <header className="flex justify-between items-center border-b border-purple-900/50 pb-4 mb-8 relative z-10">
         <div className="flex items-center gap-3">
           <div className="relative">
-            <Cpu className="w-8 h-8 animate-pulse text-cyan-400" />
+            <Cpu className="w-8 h-8 animate-pulse text-purple-400" />
             <motion.div 
               animate={{ scale: [1, 1.5, 1], opacity: [0.5, 0, 0.5] }}
               transition={{ duration: 2, repeat: Infinity }}
-              className="absolute inset-0 bg-cyan-500 rounded-full blur-md"
+              className="absolute inset-0 bg-purple-500 rounded-full blur-md"
             />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-widest">JARVIS V2.0</h1>
-            <p className="text-[10px] text-cyan-600 font-black uppercase tracking-[0.3em]">Protocolo: Criador Reconhecido</p>
+            <h1 className="text-xl font-bold tracking-widest neon-text">JARVIS V4.0</h1>
+            <p className="text-[10px] text-purple-600 font-black uppercase tracking-[0.3em]">Protocolo: Criador Reconhecido</p>
           </div>
         </div>
         <div className="flex gap-6 items-center">
+          <button 
+            onClick={screenStream ? stopScreenLink : startScreenLink}
+            className={`flex items-center gap-2 px-3 py-1 rounded border transition-all ${screenStream ? "bg-red-500/20 border-red-500 text-red-500" : "bg-purple-500/10 border-purple-500/30 text-purple-400 hover:bg-purple-500/20"}`}
+          >
+            <Monitor className="w-3 h-3" />
+            <span className="text-[10px] font-bold uppercase">{screenStream ? "Desvincular Tela" : "Vincular Tela"}</span>
+          </button>
           <div className="flex items-center gap-2 text-[10px] opacity-70">
-            <Settings className="w-3 h-3 text-cyan-500" />
-            <span className="text-cyan-500/50">API: ACTIVE</span>
+            <Settings className="w-3 h-3 text-purple-500" />
+            <span className="text-purple-500/50">API: ACTIVE</span>
           </div>
           <div className="flex items-center gap-2 text-[10px] opacity-70">
             <MapPin className={`w-3 h-3 ${location ? "text-green-500" : "text-red-500"}`} />
@@ -311,8 +419,32 @@ export default function App() {
 
       <main className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-8 relative overflow-y-auto lg:overflow-hidden">
         {/* Left Panel: Logs & Terminal */}
-        <section className="bg-slate-900/50 border border-cyan-900/30 rounded-lg p-4 flex flex-col gap-4 backdrop-blur-sm h-[400px] lg:h-full">
-          <div className="flex items-center gap-2 border-b border-cyan-900/30 pb-2">
+        <section className="glass-panel rounded-lg p-4 flex flex-col gap-4 h-[400px] lg:h-full">
+          {/* Screen Link Preview */}
+          <AnimatePresence>
+            {screenStream && (
+              <motion.div 
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="bg-slate-950 border border-purple-500/30 rounded-lg overflow-hidden relative group mb-2"
+              >
+                <div className="absolute top-2 left-2 z-10 flex items-center gap-2 bg-slate-950/80 px-2 py-1 rounded border border-purple-500/30">
+                  <Eye className="w-3 h-3 text-purple-400 animate-pulse" />
+                  <span className="text-[8px] font-bold uppercase tracking-widest text-purple-400">Link Visual Ativo</span>
+                </div>
+                <video 
+                  ref={videoRef} 
+                  autoPlay 
+                  playsInline 
+                  muted 
+                  className="w-full aspect-video object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                />
+                <div className="absolute inset-0 pointer-events-none border-2 border-purple-500/10 animate-pulse" />
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <div className="flex items-center gap-2 border-b border-purple-900/30 pb-2">
             <Terminal className="w-4 h-4" />
             <h2 className="text-sm font-bold uppercase">Interface de Comando</h2>
           </div>
@@ -324,8 +456,8 @@ export default function App() {
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   className={`text-xs p-2 rounded ${
-                    log.type === "user" ? "bg-cyan-900/20 border-l-2 border-cyan-500" : 
-                    log.type === "jarvis" ? "bg-purple-900/20 border-l-2 border-purple-500" : 
+                    log.type === "user" ? "bg-purple-900/20 border-l-2 border-purple-500" : 
+                    log.type === "jarvis" ? "bg-fuchsia-900/20 border-l-2 border-fuchsia-500" : 
                     "bg-slate-800/50 italic opacity-70"
                   }`}
                 >
@@ -354,11 +486,11 @@ export default function App() {
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               placeholder="Digite um comando..."
-              className="w-full bg-slate-950/50 border border-cyan-900/50 rounded-lg py-2 px-4 text-xs focus:outline-none focus:border-cyan-500 transition-colors pr-10"
+              className="w-full bg-slate-950/50 border border-purple-900/50 rounded-lg py-2 px-4 text-xs focus:outline-none focus:border-purple-500 transition-colors pr-10"
             />
             <button 
               type="submit"
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-cyan-500 hover:text-cyan-400 transition-colors"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-purple-500 hover:text-purple-400 transition-colors"
             >
               <Terminal className="w-4 h-4" />
             </button>
@@ -374,14 +506,14 @@ export default function App() {
               <button
                 onClick={toggleListening}
                 className={`group relative p-8 rounded-full transition-all duration-500 ${
-                  isListening ? "bg-red-500/20 shadow-[0_0_40px_rgba(239,68,68,0.4)]" : "bg-cyan-500/10 hover:bg-cyan-500/20 shadow-[0_0_20px_rgba(6,182,212,0.2)]"
+                  isListening ? "bg-red-500/20 shadow-[0_0_40px_rgba(239,68,68,0.4)]" : "bg-purple-500/10 hover:bg-purple-500/20 shadow-[0_0_20px_rgba(168,85,247,0.2)]"
                 }`}
               >
-                <div className="absolute inset-0 rounded-full border border-cyan-500/50 group-hover:scale-110 transition-transform" />
+                <div className="absolute inset-0 rounded-full border border-purple-500/50 group-hover:scale-110 transition-transform" />
                 {isListening ? (
                   <MicOff className="w-12 h-12 text-red-500" />
                 ) : (
-                  <Mic className="w-12 h-12 text-cyan-400" />
+                  <Mic className="w-12 h-12 text-purple-400" />
                 )}
               </button>
 
@@ -398,7 +530,7 @@ export default function App() {
                 </motion.button>
               )}
             </div>
-            <p className="text-sm animate-pulse text-cyan-600 font-bold tracking-widest uppercase text-center">
+            <p className="text-sm animate-pulse text-purple-600 font-bold tracking-widest uppercase text-center">
               {isListening ? "Escutando Criador..." : "Aguardando Instruções"}
             </p>
           </div>
@@ -406,7 +538,7 @@ export default function App() {
           {/* Mobile Smart Home Quick Access */}
           <div className="lg:hidden grid grid-cols-4 gap-4 w-full px-4">
             {homeDevices.map(device => (
-              <div key={device.id} className={`p-3 rounded-xl border flex flex-col items-center gap-2 ${device.status === 'on' ? 'bg-cyan-500/20 border-cyan-500' : 'bg-slate-900/50 border-cyan-900/30 opacity-50'}`}>
+              <div key={device.id} className={`p-3 rounded-xl border flex flex-col items-center gap-2 ${device.status === 'on' ? 'bg-purple-500/20 border-purple-500' : 'bg-slate-900/50 border-purple-900/30 opacity-50'}`}>
                 {device.type === 'luz' && <Lightbulb className="w-5 h-5" />}
                 {device.type === 'ar' && <Thermometer className="w-5 h-5" />}
                 {device.type === 'seguranca' && <Shield className="w-5 h-5" />}
@@ -418,15 +550,34 @@ export default function App() {
 
         {/* Right Panel: Intelligence & Automation */}
         <section className="space-y-6 overflow-y-auto custom-scrollbar pr-2 h-full">
+          {/* Local Scripts HUD */}
+          <div className="glass-panel rounded-lg p-4">
+            <div className="flex items-center gap-2 border-b border-purple-900/30 pb-2 mb-4">
+              <FileCode className="w-4 h-4 text-purple-400" />
+              <h2 className="text-sm font-bold uppercase">Módulo Actions: Scripts Locais</h2>
+            </div>
+            <div className="space-y-3">
+              <p className="text-[10px] opacity-60 leading-relaxed">
+                Senhor, estes são os núcleos de automação para execução no seu sistema operacional local (Windows).
+              </p>
+              <button 
+                onClick={() => setShowScripts(true)}
+                className="w-full py-3 bg-slate-950 border border-purple-500/30 rounded-lg text-xs font-bold hover:bg-purple-500/10 transition-all flex items-center justify-center gap-2"
+              >
+                <Terminal className="w-4 h-4" /> ACESSAR CÓDIGO FONTE
+              </button>
+            </div>
+          </div>
+
           {/* Smart Home HUD */}
-          <div className="bg-slate-900/50 border border-cyan-900/30 rounded-lg p-4 backdrop-blur-sm">
-            <div className="flex items-center gap-2 border-b border-cyan-900/30 pb-2 mb-4">
-              <Settings className="w-4 h-4 text-cyan-400" />
+          <div className="glass-panel rounded-lg p-4">
+            <div className="flex items-center gap-2 border-b border-purple-900/30 pb-2 mb-4">
+              <Settings className="w-4 h-4 text-purple-400" />
               <h2 className="text-sm font-bold uppercase">Controle Residencial</h2>
             </div>
             <div className="grid grid-cols-2 gap-3">
               {homeDevices.map(device => (
-                <div key={device.id} className={`p-3 rounded-lg border transition-all ${device.status === 'on' ? 'bg-cyan-500/10 border-cyan-500/50' : 'bg-slate-800/30 border-cyan-900/20 opacity-60'}`}>
+                <div key={device.id} className={`p-3 rounded-lg border transition-all ${device.status === 'on' ? 'bg-purple-500/10 border-purple-500/50' : 'bg-slate-800/30 border-purple-900/20 opacity-60'}`}>
                   <div className="flex items-center gap-2 mb-1">
                     {device.type === 'luz' && <Lightbulb className="w-3 h-3" />}
                     {device.type === 'ar' && <Thermometer className="w-3 h-3" />}
@@ -446,17 +597,17 @@ export default function App() {
           </div>
 
           {/* App Actions HUD */}
-          <div className="bg-slate-900/50 border border-cyan-900/30 rounded-lg p-4 backdrop-blur-sm">
-            <div className="flex items-center gap-2 border-b border-cyan-900/30 pb-2 mb-4">
-              <Smartphone className="w-4 h-4 text-cyan-400" />
+          <div className="glass-panel rounded-lg p-4">
+            <div className="flex items-center gap-2 border-b border-purple-900/30 pb-2 mb-4">
+              <Smartphone className="w-4 h-4 text-purple-400" />
               <h2 className="text-sm font-bold uppercase">Execução de Apps</h2>
             </div>
             <div className="space-y-2">
               {appActions.length > 0 ? (
                 appActions.map(action => (
-                  <div key={action.id} className="text-[10px] p-2 bg-cyan-900/10 border border-cyan-900/30 rounded flex justify-between items-center">
+                  <div key={action.id} className="text-[10px] p-2 bg-purple-900/10 border border-purple-900/30 rounded flex justify-between items-center">
                     <div>
-                      <span className="font-bold text-cyan-300 uppercase">{action.app}</span>
+                      <span className="font-bold text-purple-300 uppercase">{action.app}</span>
                       <span className="mx-2 opacity-50">→</span>
                       <span className="opacity-70">{action.action}</span>
                     </div>
@@ -471,21 +622,81 @@ export default function App() {
             </div>
           </div>
 
+          {/* Finance HUD */}
+          <div className="glass-panel rounded-lg p-4">
+            <div className="flex items-center gap-2 border-b border-purple-900/30 pb-2 mb-4">
+              <TrendingUp className="w-4 h-4 text-purple-400" />
+              <h2 className="text-sm font-bold uppercase">Módulo Financeiro</h2>
+            </div>
+            <div className="space-y-2">
+              {financeRecords.length > 0 ? (
+                financeRecords.map(record => (
+                  <div key={record.id} className="flex justify-between items-center text-[10px] p-2 bg-slate-950/50 border border-purple-900/20 rounded">
+                    <div className="flex flex-col">
+                      <span className="font-bold uppercase opacity-70">{record.description}</span>
+                      <span className="text-[8px] opacity-40">{record.date}</span>
+                    </div>
+                    <span className={`font-bold ${record.type === 'ganho' ? 'text-green-500' : 'text-red-500'}`}>
+                      {record.type === 'ganho' ? '+' : '-'} R$ {record.amount.toLocaleString()}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-4 opacity-30 text-xs italic">
+                  Sem registros financeiros.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Planning HUD */}
+          <div className="glass-panel rounded-lg p-4">
+            <div className="flex items-center gap-2 border-b border-purple-900/30 pb-2 mb-4">
+              <ListChecks className="w-4 h-4 text-purple-400" />
+              <h2 className="text-sm font-bold uppercase">Brain: Planejamento</h2>
+            </div>
+            {currentPlan ? (
+              <div className="space-y-3">
+                <p className="text-[10px] font-bold text-purple-300 uppercase underline decoration-purple-500/30 underline-offset-4 mb-2">
+                  Objetivo: {currentPlan.goal}
+                </p>
+                <div className="space-y-2">
+                  {currentPlan.steps.map((step, i) => (
+                    <div key={i} className="flex items-start gap-2 text-[10px]">
+                      <span className="w-4 h-4 rounded-full bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-[8px] shrink-0">{i + 1}</span>
+                      <span className="opacity-80">{step}</span>
+                    </div>
+                  ))}
+                </div>
+                <button 
+                  onClick={() => setCurrentPlan(null)}
+                  className="w-full py-2 mt-2 bg-purple-500/10 border border-purple-500/30 rounded text-[10px] font-bold hover:bg-purple-500/20 transition-colors"
+                >
+                  LIMPAR PLANO
+                </button>
+              </div>
+            ) : (
+              <div className="text-center py-4 opacity-30 text-xs italic">
+                Aguardando comando complexo...
+              </div>
+            )}
+          </div>
+
           {/* System Resources HUD */}
-          <div className="bg-slate-900/50 border border-cyan-900/30 rounded-lg p-4 backdrop-blur-sm">
+          <div className="glass-panel rounded-lg p-4">
             <div className="flex justify-between text-[8px] mb-2">
               <span>CPU LOAD</span>
               <span>MEMORY</span>
               <span>NETWORK</span>
             </div>
             <div className="flex gap-2 h-1">
-              <div className="flex-1 bg-cyan-900/30 rounded-full overflow-hidden">
-                <motion.div animate={{ width: ["20%", "45%", "30%"] }} transition={{ duration: 3, repeat: Infinity }} className="h-full bg-cyan-500" />
+              <div className="flex-1 bg-purple-900/30 rounded-full overflow-hidden">
+                <motion.div animate={{ width: ["20%", "45%", "30%"] }} transition={{ duration: 3, repeat: Infinity }} className="h-full bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.5)]" />
               </div>
-              <div className="flex-1 bg-cyan-900/30 rounded-full overflow-hidden">
-                <motion.div animate={{ width: ["60%", "65%", "62%"] }} transition={{ duration: 5, repeat: Infinity }} className="h-full bg-purple-500" />
+              <div className="flex-1 bg-purple-900/30 rounded-full overflow-hidden">
+                <motion.div animate={{ width: ["60%", "65%", "62%"] }} transition={{ duration: 5, repeat: Infinity }} className="h-full bg-fuchsia-500 shadow-[0_0_8px_rgba(217,70,239,0.5)]" />
               </div>
-              <div className="flex-1 bg-cyan-900/30 rounded-full overflow-hidden">
+              <div className="flex-1 bg-purple-900/30 rounded-full overflow-hidden">
                 <motion.div animate={{ width: ["10%", "90%", "15%"] }} transition={{ duration: 2, repeat: Infinity }} className="h-full bg-green-500" />
               </div>
             </div>
@@ -528,8 +739,8 @@ export default function App() {
           </div>
 
           {/* Leads Panel */}
-          <div className="bg-slate-900/50 border border-cyan-900/30 rounded-lg p-4 flex flex-col backdrop-blur-sm">
-            <div className="flex items-center gap-2 border-b border-cyan-900/30 pb-2 mb-4">
+          <div className="glass-panel rounded-lg p-4 flex flex-col">
+            <div className="flex items-center gap-2 border-b border-purple-900/30 pb-2 mb-4">
               <Search className="w-4 h-4" />
               <h2 className="text-sm font-bold uppercase">Inteligência de Mercado</h2>
             </div>
@@ -541,11 +752,11 @@ export default function App() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: i * 0.1 }}
                     key={i}
-                    className="text-[10px] p-2 bg-cyan-900/10 border border-cyan-900/30 rounded hover:bg-cyan-900/20 transition-colors group"
+                    className="text-[10px] p-2 bg-purple-900/10 border border-purple-900/30 rounded hover:bg-purple-900/20 transition-colors group"
                   >
                     <div className="flex justify-between items-start">
-                      <p className="font-bold text-cyan-300">{lead.name}</p>
-                      <MapPin className="w-2 h-2 text-cyan-600" />
+                      <p className="font-bold text-purple-300">{lead.name}</p>
+                      <MapPin className="w-2 h-2 text-purple-600" />
                     </div>
                     <p className="opacity-70">{lead.address}</p>
                     <span className="text-yellow-500 mt-1 block font-bold">{lead.status}</span>
@@ -559,20 +770,20 @@ export default function App() {
             </div>
           </div>
 
-          <div className="bg-slate-900/50 border border-cyan-900/30 rounded-lg p-4 h-[calc(50%-1.5rem)] flex flex-col backdrop-blur-sm">
-            <div className="flex items-center gap-2 border-b border-cyan-900/30 pb-2 mb-4">
+          <div className="glass-panel rounded-lg p-4 h-[calc(50%-1.5rem)] flex flex-col">
+            <div className="flex items-center gap-2 border-b border-purple-900/30 pb-2 mb-4">
               <Layout className="w-4 h-4" />
               <h2 className="text-sm font-bold uppercase">Projetos de Web</h2>
             </div>
             {siteData ? (
               <div className="flex-1 flex flex-col gap-3">
-                <div className="p-3 bg-cyan-500/10 border border-cyan-500/30 rounded">
+                <div className="p-3 bg-purple-500/10 border border-purple-500/30 rounded">
                   <p className="text-[10px] uppercase opacity-50 mb-1">Cliente</p>
                   <p className="text-xs font-bold text-white">{siteData.name}</p>
                 </div>
                 <button 
                   onClick={() => setShowSiteBuilder(true)}
-                  className="mt-auto w-full py-3 bg-cyan-500 text-slate-950 font-bold text-xs rounded hover:bg-cyan-400 transition-all flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(6,182,212,0.4)]"
+                  className="mt-auto w-full py-3 bg-purple-500 text-slate-950 font-bold text-xs rounded hover:bg-purple-400 transition-all flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(168,85,247,0.4)]"
                 >
                   <ExternalLink className="w-3 h-3" /> ABRIR CONSTRUTOR
                 </button>
@@ -595,14 +806,14 @@ export default function App() {
               exit={{ opacity: 0 }}
               className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-xl flex items-center justify-center p-4 lg:p-12"
             >
-              <div className="w-full max-w-5xl h-full bg-slate-900 border border-cyan-500/30 rounded-2xl overflow-hidden flex flex-col shadow-[0_0_100px_rgba(6,182,212,0.2)]">
+              <div className="w-full max-w-5xl h-full bg-slate-900 border border-purple-500/30 rounded-2xl overflow-hidden flex flex-col shadow-[0_0_100px_rgba(168,85,247,0.2)]">
                 {/* Modal Header */}
-                <div className="p-4 border-b border-cyan-900/50 flex justify-between items-center bg-slate-950/50">
+                <div className="p-4 border-b border-purple-900/50 flex justify-between items-center bg-slate-950/50">
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded bg-cyan-500 flex items-center justify-center text-slate-950 font-bold">J</div>
+                    <div className="w-8 h-8 rounded bg-purple-500 flex items-center justify-center text-slate-950 font-bold">J</div>
                     <div>
                       <h3 className="text-sm font-bold uppercase tracking-widest">Jarvis Web Builder</h3>
-                      <p className="text-[10px] text-cyan-600">PREVISUALIZAÇÃO EM TEMPO REAL</p>
+                      <p className="text-[10px] text-purple-600">PREVISUALIZAÇÃO EM TEMPO REAL</p>
                     </div>
                   </div>
                   <button 
@@ -658,11 +869,11 @@ export default function App() {
                 </div>
 
                 {/* Modal Controls */}
-                <div className="p-4 bg-slate-950/80 border-t border-cyan-900/50 flex justify-between items-center">
+                <div className="p-4 bg-slate-950/80 border-t border-purple-900/50 flex justify-between items-center">
                   <p className="text-[10px] opacity-50 uppercase">Tecnologia: React + Tailwind + Gemini AI</p>
                   <div className="flex gap-4">
-                    <button className="px-6 py-2 border border-cyan-500/30 rounded text-xs font-bold hover:bg-cyan-500/10">EDITAR CÓDIGO</button>
-                    <button className="px-6 py-2 bg-cyan-500 text-slate-950 rounded text-xs font-bold hover:bg-cyan-400">PUBLICAR AGORA</button>
+                    <button className="px-6 py-2 border border-purple-500/30 rounded text-xs font-bold hover:bg-purple-500/10">EDITAR CÓDIGO</button>
+                    <button className="px-6 py-2 bg-purple-500 text-slate-950 rounded text-xs font-bold hover:bg-purple-400">PUBLICAR AGORA</button>
                   </div>
                 </div>
               </div>
@@ -682,20 +893,20 @@ export default function App() {
               <motion.div 
                 initial={{ scale: 0.9, y: 20 }}
                 animate={{ scale: 1, y: 0 }}
-                className="w-full max-w-md bg-slate-900 border border-cyan-500/30 rounded-2xl p-8 shadow-[0_0_50px_rgba(6,182,212,0.2)]"
+                className="w-full max-w-md bg-slate-900 border border-purple-500/30 rounded-2xl p-8 shadow-[0_0_50px_rgba(168,85,247,0.2)]"
               >
                 <div className="flex items-center gap-4 mb-6">
-                  <div className="p-3 bg-cyan-500/20 rounded-xl">
-                    <Shield className="w-8 h-8 text-cyan-400" />
+                  <div className="p-3 bg-purple-500/20 rounded-xl">
+                    <Shield className="w-8 h-8 text-purple-400" />
                   </div>
                   <div>
                     <h2 className="text-xl font-bold text-white">Confirmação Stark</h2>
-                    <p className="text-xs text-cyan-600 uppercase tracking-widest">Protocolo de Segurança</p>
+                    <p className="text-xs text-purple-600 uppercase tracking-widest">Protocolo de Segurança</p>
                   </div>
                 </div>
                 
-                <p className="text-cyan-100 mb-8 leading-relaxed">
-                  Senhor, recebi uma solicitação para <span className="text-cyan-400 font-bold">{pendingAction.type}</span>. 
+                <p className="text-purple-100 mb-8 leading-relaxed">
+                  Senhor, recebi uma solicitação para <span className="text-purple-400 font-bold">{pendingAction.type}</span>. 
                   Deseja que eu execute esta ação agora?
                 </p>
                 
@@ -714,12 +925,105 @@ export default function App() {
                       pendingAction.callback();
                       setPendingAction(null);
                     }}
-                    className="py-3 rounded-xl bg-cyan-500 text-slate-950 font-bold hover:bg-cyan-400 transition-all shadow-[0_0_20px_rgba(6,182,212,0.4)]"
+                    className="py-3 rounded-xl bg-purple-500 text-slate-950 font-bold hover:bg-purple-400 transition-all shadow-[0_0_20px_rgba(168,85,247,0.4)]"
                   >
                     EXECUTAR
                   </button>
                 </div>
               </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Local Scripts Modal */}
+        <AnimatePresence>
+          {showScripts && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] bg-slate-950/90 backdrop-blur-xl flex items-center justify-center p-4 lg:p-12"
+            >
+              <div className="w-full max-w-4xl h-full bg-slate-900 border border-purple-500/30 rounded-2xl overflow-hidden flex flex-col shadow-[0_0_100px_rgba(168,85,247,0.2)]">
+                <div className="p-4 border-b border-purple-900/50 flex justify-between items-center bg-slate-950/50">
+                  <div className="flex items-center gap-3">
+                    <FileCode className="w-6 h-6 text-purple-400" />
+                    <div>
+                      <h3 className="text-sm font-bold uppercase tracking-widest">Módulo Actions: Scripts Python</h3>
+                      <p className="text-[10px] text-purple-600">NÚCLEO DE AUTOMAÇÃO LOCAL</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setShowScripts(false)}
+                    className="p-2 hover:bg-red-500/20 rounded-full transition-colors text-red-500"
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
+                  <div className="space-y-4">
+                    <h4 className="text-purple-400 font-bold text-xs uppercase tracking-widest">1. main.py (Núcleo de Controle)</h4>
+                    <div className="bg-slate-950 rounded-lg p-4 border border-purple-900/30">
+                      <pre className="text-[10px] text-purple-700 leading-relaxed">
+{`import speech_recognition as sr
+import pyttsx3
+import requests
+
+def listen():
+    r = sr.Recognizer()
+    with sr.Microphone() as source:
+        print("Jarvis ouvindo...")
+        audio = r.listen(source)
+    try:
+        return r.recognize_google(audio, language='pt-BR')
+    except:
+        return ""
+
+def speak(text):
+    engine = pyttsx3.init()
+    engine.say(text)
+    engine.runAndWait()
+
+while True:
+    command = listen()
+    if "jarvis" in command.lower():
+        # Envia para o servidor central (este app)
+        response = requests.post("https://seu-app.vercel.app/api/command", json={"command": command})
+        speak(response.json()["text"])`}
+                      </pre>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <h4 className="text-purple-400 font-bold text-xs uppercase tracking-widest">2. actions.py (Automação PyAutoGUI)</h4>
+                    <div className="bg-slate-950 rounded-lg p-4 border border-purple-900/30">
+                      <pre className="text-[10px] text-purple-700 leading-relaxed">
+{`import pyautogui
+import os
+
+def open_app(app_name):
+    os.system(f"start {app_name}")
+
+def type_text(text):
+    pyautogui.write(text, interval=0.1)
+
+def take_screenshot():
+    pyautogui.screenshot("screen.png")`}
+                      </pre>
+                    </div>
+                  </div>
+
+                  <div className="p-4 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+                    <p className="text-xs font-bold text-purple-300 mb-2 uppercase">Instruções de Instalação:</p>
+                    <ol className="text-[10px] space-y-1 list-decimal list-inside opacity-80">
+                      <li>Instale o Python 3.10+ no seu Windows.</li>
+                      <li>Execute: pip install SpeechRecognition pyttsx3 requests pyautogui selenium</li>
+                      <li>Copie os códigos acima para arquivos .py na mesma pasta.</li>
+                      <li>Execute o main.py para iniciar a integração local.</li>
+                    </ol>
+                  </div>
+                </div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -736,19 +1040,6 @@ export default function App() {
           <p>© 2026 STARK INDUSTRIES</p>
         </div>
       </footer>
-
-      <style>{`
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 4px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: rgba(6, 182, 212, 0.05);
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: rgba(6, 182, 212, 0.2);
-          border-radius: 10px;
-        }
-      `}</style>
     </div>
   );
 }
